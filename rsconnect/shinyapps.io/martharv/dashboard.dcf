@@ -1,0 +1,11 @@
+name: dashboard
+title: dashboard
+account: martharv
+server: shinyapps.io
+appId: 202569
+bundleId: 929980
+url: https://martharv.shinyapps.io/dashboard/
+when: 1502044828.92724
+asMultiple: FALSE
+asStatic: FALSE
+ignoredFiles: .RData|.httr-oauth|data.csv|prueba.csv|twitter.html|www/custom.css|www/dashboard1.png|www/dashboard2.png|www/marketExplorer1.png|www/marketExplorer2.png|www/marketForecast.png|www/marketForecast1.png|www/marketForecast2.png|www/marketForecast3.png|www/marketReport.png|www/modelCompare.png|www/modelCompare1.png|www/modelCompare2.png|www/modelCompare3.png|www/nonSeasonal.png|www/queryBuilder.png|www/seasonal.png|www/trainModel.png|www/trainParameters.png|www/valueAnalyzer1.png|www/valueAnalyzer2.png
