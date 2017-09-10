@@ -13,6 +13,7 @@ library("twitteR")
 library("ROAuth")
 library(tidyr)
 library(PerformanceAnalytics)
+Quandl.api_key("suvzGQngkGpSz5ndrb9q")
 
 readDGTL <- function(date){
   df <- read.xls("./www/iShares-Digitalisation-UCITS-ETF_fund.xlsx",sheet=3,header=TRUE)
@@ -23,6 +24,13 @@ readDGTL <- function(date){
   return (DGTL <- DGTL[paste0(date,'::')])
 }
 
+dailyReturnMulti <- function(stockPrices){
+  temp <- do.call(merge,lapply(stockPrices,function(x){temp <- dailyReturn(x)
+  colnames(temp) <- colnames(x)
+  return (temp)}))
+  return (temp)
+}
+
 loadPrices <- function(stocksData, startDate){
   res <- dlply(stocksData, 1, function(x){generarDatos(x,startDate,progress)})
   if ((length(res))>1) {
@@ -31,6 +39,8 @@ loadPrices <- function(stocksData, startDate){
     prices <- res[[1]]
   }
   prices <- na.locf(prices)
+  print("antes de quiatar adjusted")
+  head(prices)
   colnames(prices) <- gsub(".Adjusted","",colnames(prices))
   return (prices)
 }
@@ -45,6 +55,23 @@ createPortfolio <- function(dataFrame, startDate, benchmarkTicker)
   return (allData)
 }
 
+tidyPortfolio <- function(portfolio_analytics){
+  Weight <- portfolio_analytics$EOP.Weight
+  Value <- portfolio_analytics$EOP.Value
+  startWeight <- as.vector(portfolio_analytics$BOP.Weight[1,])
+  RentAcum <- Value/startWeight-1
+  Contribution <- portfolio_analytics$contribution
+  Weightdf <- data.frame(date=index(Weight),coredata(Weight))
+  Valuedf <- data.frame(date=index(Value),coredata(Value))
+  Contributiondf <- data.frame(date=index(Contribution),coredata(Contribution))
+  RentAcumdf <- data.frame(date=index(RentAcum),coredata(RentAcum))
+  newData <- Weightdf %>% gather(stock,weight,-date)
+  newData1 <- Valuedf %>% gather(stock,value,-date)
+  newData2 <- Contributiondf %>% gather(stock,contribution,-date)
+  newData3 <- RentAcumdf %>% gather(stock,rentAcum,-date)
+  allData <- newData %>% merge(newData1) %>% merge(newData2) %>% merge(newData3)
+  return(allData)
+}
 
 
 
@@ -103,10 +130,12 @@ generarDatos <- function(stockData,fecha,progress){
     print(head(dat.all))
     dat.all = dat.all[complete.cases(dat.all),]
     colnames(dat.all) <- c("Price","Currency")
-    return (stockPrices <- dat.all$Price/dat.all$Currency)
-  }else{
-    return (stockPrices)
+    stockPrices <- dat.all$Price/dat.all$Currency
+    colnames(stockPrices) <-c(stockData$ticker)
   }
+  print("lo que devuelve generar datos")
+  print(head(stockPrices))
+  return (stockPrices)
 }
 
 
@@ -126,16 +155,21 @@ update <- FALSE
 data <- read.csv("data.csv",header=TRUE,sep = ";",dec = ",",
                  colClasses=(c("character","character","numeric")))
 colnames(data) <- c("ticker","currency","weight")
+dataBenchmark <- read.csv("benchmarkData.csv",header=TRUE,sep = ";",dec = ",",
+                          colClasses=(c("character","character","numeric")))
+colnames(dataBenchmark) <- c("ticker","currency","weight")
 initValue <- 100000
 if (update==TRUE){
   EURUSD <- Quandl("ECB/EURUSD",start_date="2016-01-01",type="xts")
   EURGBP <- Quandl("ECB/EURGBP",start_date="2016-01-01",type="xts")
   Divisa <<- cbind(EURUSD,EURGBP)
   colnames(Divisa) <<- c("USD","GBP")
-  benchmarkTicker <- "SPY"
+  #benchmarkTicker <- "SPY"
+  #benchmarkCurrency <- "USD"
   startDate <- "2017-05-30"
   prices <- loadPrices(data,startDate)
-  bench <- leerYahoo("SPY",startDate)
+  #bench <- leerYahoo("SPY",startDate) #Antigua llamada
+  bench <- loadPrices(dataBenchmark,startDate) #Nueva llamada
   bench <- na.locf(bench)
   allData <- merge(prices,bench)
   allData <- allData[complete.cases(allData),]
@@ -145,6 +179,8 @@ if (update==TRUE){
   allData <- read.zoo("prueba.csv",index.column = 1, sep = " ", header = TRUE)
   Divisa <- read.zoo("currencyData.csv",index.column = 1, sep = " ", header = TRUE)
 }
+startDate <- index(allData[1])
+endDate <- index(allData[nrow(allData)])
 
 ui <- dashboardPage(
   dashboardHeader(title = "Porfolio Management"),
@@ -165,18 +201,30 @@ ui <- dashboardPage(
                 title = "Dashboard",
                 fluidRow(
                   column(width = 12,
-                         valueBoxOutput("usViBox", width = 3),
-                         valueBoxOutput("highestViBox", width = 3),
-                         valueBoxOutput("usAnnualBox", width = 3),
-                         valueBoxOutput("highestAnnualBox", width = 3)
+                         valueBoxOutput("navBox", width = 3),
+                         valueBoxOutput("ytdBox", width = 3),
+                         valueBoxOutput("dBox", width = 3),
+                         valueBoxOutput("mtdBox", width = 3)
                   )#end of column
                 ),# end of row
                 fluidRow(
-                  column(width = 4,includeHTML("twitter.html")
-                           ),# end of column
+                  #column(width = 4,includeHTML("twitter.html")
+                  #         ),# end of column
+                  column(width = 4, 
+                         box(
+                          title = "Informacion General",
+                          status = "primary",
+                          width = 12,
+                          height = 255,
+                          solidHeader = FALSE,
+                          collapsible = FALSE,
+                          htmlOutput("portDataOutput"),
+                          tableOutput("rentTable")
+                  )
+                  ),# end of column
                   column(width = 4,
                          box(
-                           title = "Top 10 Stocks",
+                           title = "Mejores Posiciones",
                            status = "primary",
                            width = 12,
                            height = 255,
@@ -187,7 +235,7 @@ ui <- dashboardPage(
                          ),# End of column
                   column(width = 4,
                          box(
-                           title = "Worst 10 Stocks",
+                           title = "Peores Posiciones",
                            status = "primary",
                            width = 12,
                            height = 255,
@@ -206,7 +254,6 @@ ui <- dashboardPage(
                            solidHeader = FALSE,
                            collapsible = TRUE,
                            plotOutput("evolDashboard")
-                           #showOutput("top10StatesTS", "nvd3")
                          ) #End of Box
                   )# end of column
                   # column(width = 6,
@@ -232,8 +279,29 @@ ui <- dashboardPage(
       ), # End of tabItem
       # Second tab content
       tabItem(tabName = "widgets",
-              h2("Widgets tab content"),
-              plotOutput("evolucion")
+              fluidRow(
+                box(
+                  title="Posiciones Cartera", status="primary",solidHeader=TRUE, width=4,
+                  tableOutput("holdings")
+                  ),
+                box(
+                  title="Estadisticas", status="primary",solidHeader=TRUE, width=4,
+                  tableOutput("portSummary")
+                ),
+                box(
+                  title="Regresion vs. Benchmark", status="primary",solidHeader=TRUE, width=4,
+                  plotOutput("plotRegresion")
+                )
+              ),
+              fluidRow(
+                box(
+                  title="Correlaciones",status = "primary",
+                           width = 12,
+                           solidHeader = FALSE,
+                           collapsible = TRUE,
+                           tableOutput("tableCorrelacion")
+                )
+              )
       ),
       tabItem(tabName = "createPortfolio",
       fluidRow(
@@ -253,7 +321,7 @@ ui <- dashboardPage(
             actionButton(inputId="nuevo", label="Nuevo Portfolio")
             ),
           box(
-            title = "Evolution", status = "primary", solidHeader = TRUE, width = 8,
+            title = "Rentabilidad Historica", status = "primary", solidHeader = TRUE, width = 8,
             htmlOutput(outputId="texto",FALSE),
             tableOutput('table'),
             plotOutput("evolCreatedPorfolio"),
@@ -276,36 +344,50 @@ server <- function(input, output, session) {
   
   updateSelectizeInput(session,'accion',choices=stockTickers, server=TRUE)
   updateSelectizeInput(session,'benchmark',choices=benchTickers, server=TRUE)
-  
+
   allData <- allData[complete.cases(allData),]
   prices <- na.locf(allData[,(-ncol(allData))])
-  bench <- na.locf(allData[,ncol(allData)])
+  bench <- as.xts(na.locf(allData[,ncol(allData)]))
+  allData <- as.xts(allData)
+  print("Dato inicial")
+  print(tail(prices))
   #Create Portfolio
   buyPrices <- prices[1]
   weights <- data[,"weight"]
   quantity <- initValue*weights/100
   quantity <- quantity/buyPrices
   totalInverted <- sum(quantity*buyPrices)
-  lag <- stats::lag
-  s <- lag(as.xts(prices))
+  #lag <- stats::lag
+  #s <- lag(as.xts(prices))
   
-  s <- lag(allData)
-  rets = allData/lag(allData) - 1
+  #s <- lag(allData)
+  #rets = allData/lag(allData) - 1 reemplazada por otra mejor
+  print("All Data")
+  print(class(allData))
+  print(head(allData))
+  rets <- dailyReturnMulti(allData)
+  print("Rentabilidades")
+  print(tail(rets))
   #rets <- Return.calculate(allData,method="discrete")#da error
   returns <- as.xts(rets[,(-ncol(rets))])
   retsBench <- as.xts(rets[,ncol(rets)])
   print(class(retsBench))
   retsBench[1,] <- 0
   returns[1,] <- 0
-  print(head(returns))
-  print(head(retsBench))
+  print(tail(returns))
+  print(tail(retsBench))
  
   portfolio_analytics <- Return.portfolio(R = returns, weights=weights, verbose=TRUE)
+  monthlyRets <- table.CalendarReturns(portfolio_analytics$returns)
+  year <- format(Sys.Date(), "%Y")
+  month <- as.integer(format(Sys.Date(),"%m"))
+  mtd <- monthlyRets[year,month]
+  print(monthlyRets)
   # Plot the time-series
   portfolios.2 <<-cbind(cumprod(portfolio_analytics$returns+1),cumprod(retsBench+1))
   colnames(portfolios.2) <<-c("Port","Bench")
   print("PORT")
-  print(head(portfolios.2))
+  print(tail(portfolios.2))
    output$evolDashboard <- renderPlot({
      temp <- as.data.frame(portfolios.2)
      #print(class(temp))
@@ -314,8 +396,14 @@ server <- function(input, output, session) {
        labs(color="") + xlab("") + ylab("NAV")
      
    })
-  totalRentPort <- Return.cumulative(rets)*100
+  totalRentPort <- Return.cumulative(portfolio_analytics$returns)*100
   totalRentBench <- Return.cumulative(retsBench)*100
+  monthlyRentBench <- monthlyReturn(as.xts(bench))
+  dailyRentBench <- dailyReturn(as.xts(bench))
+  mtdRentPort <- mtd
+  mtdRentBench <- last(monthlyRentBench)*100
+  dRentBench <- last(dailyRentBench)*100
+  dRentPort <- last(portfolio_analytics$returns)*100
   NAV <- (totalRentPort/100+1)*initValue
   
   #===============================================================================
@@ -345,52 +433,102 @@ server <- function(input, output, session) {
   #===============================================================================
   #                        DASHBOARD SERVER FUNCTIONS                            #
   #===============================================================================
-  # Render National Home Value Index Box
-  output$usViBox <- renderValueBox({
-    #current <- currentState[ which(currentState$State == "United States"), ]
+  # Valor NAV de la Cartera
+  output$navBox <- renderValueBox({
     valueBox(
-      paste0("???",round(NAV,2)), "Valor de la cartera", 
+      paste0("EUR ",round(NAV,2)), "Valor Liquidativo", 
       icon = icon("dollar"), color = "green"
     )
   })
   
-  # Highest Home Value Index by City Box
-  output$highestViBox <- renderValueBox({
-    #current <- currentCity[ which.max(currentCity$Value), ]
+  
+  #Rentabilidad Year to Day
+  textoYTD <- paste("Port: ",round(totalRentPort,3),"%",br(),"Bench: ",round(totalRentBench,3),"%",sep="")
+  print(textoYTD)
+  output$ytdBox <- renderValueBox({
     valueBox(
-      paste0(round(totalRentPort,2),"%"), paste("Rent. Acumulada"), 
+      HTML(textoYTD), "Rent. YTD", 
       icon = icon("money"), color = "blue"
     )
   })
   
-  # Render Annual Price Growth  Box
-  output$usAnnualBox <- renderValueBox({
-    # current <- currentState[ which(currentState$State == "United States"), ]
+  #Rentabilidad Diaria
+  textoD <- paste("Port: ",round(dRentPort,3),"%",br(),"Bench: ",round(dRentBench,3),"%",sep="")
+  output$dBox <- renderValueBox({
     valueBox(
-      paste0(round(totalRentBench,2), "%"), paste("Rent. Benchmark"), 
+      HTML(textoD),"Rent. Diaria",
       icon = icon("bar-chart"), color = "red"
     )
   })
   
-  # Render Highest Annual Price Growth  Box
-  output$highestAnnualBox <- renderValueBox({
-    #current <- currentCity[ which.max(currentCity$Annual), ]
+  # Rent MTD
+  textoMTD <- paste("Port: ",round(mtdRentPort,3),"%",br(),"Bench: ",round(mtdRentBench,3),"%",sep="")
+  print(textoMTD)
+  output$mtdBox <- renderValueBox({
     valueBox(
-      paste0(round(3000 * 100,4), "%"), paste("Highest Annual Change in Home Values in ", "Bilbao"), 
+      HTML(textoMTD), paste("Rent. MTD"), 
       icon = icon("line-chart"), color = "purple"
     )
   })
   
+  output$rentTable <- renderTable({rentT <- data.frame(desdeInicio=c(totalRentPort,totalRentBench),mtd=c(mtdRentPort,mtdRentBench),ytd=c(totalRentPort,totalRentBench))
+  colnames(rentT) <- c("Desde Inicio","MTD","YTD")
+  rownames(rentT) <- c("Fondo",dataBenchmark$ticker)
+  rentT},rownames=TRUE)
+  
   output$top10 <- renderTable({
     tableStocks <<- gather(round(as.data.frame(Return.cumulative(returns)*100),2),"stock","return")
     tableStocks <<- arrange(tableStocks, desc(return))
+    colnames(tableStocks) <- c("Accion","Rentabilidad")
     head(tableStocks,5)
     })
   output$bottom10 <- renderTable({
     #table <- gather(round(as.data.frame(Return.cumulative(returns)*100),2),"stock","return")
     temp <- arrange(tableStocks, return)
+    colnames(temp) <- c("Accion","Rentabilidad")
     head(arrange(temp),5)
   })
+  
+  #===============================================================================
+  #                        DATOS DETALLADOS DEL PORT                           #
+  #===============================================================================
+  
+  output$holdings <- renderTable({
+    tidyPort <- tidyPortfolio(portfolio_analytics)
+    print(tail(tidyPort))
+    print(class(endDate))
+    print(endDate)
+    holdings <- tidyPort %>% filter(date==endDate) %>% select(stock,weight,rentAcum)
+    holdings <- holdings %>% mutate(weight1 = paste(round(weight*100,2),"%",sep=""),rentAcum1 = paste(round(rentAcum*100,2),"%",sep="")) %>% select(stock,weight1,rentAcum1) %>% arrange(desc(weight1))
+    colnames(holdings) <- c("Accion","Peso","Rent. Acum")
+    holdings
+  },striped=TRUE)
+  
+  output$portDataOutput <- renderUI(
+    tags$div(
+      tags$p(HTML(paste("<b>Fecha Inicial:</b> ",startDate,br(),"<b>Fecha Actual: </b>",endDate,sep="",collapse=" "))) 
+      #tags$p("Third paragraph")
+    )
+  )
+  
+  
+  output$portSummary <- renderTable({
+    res <- table.SFM(portfolio_analytics$returns, retsBench, Rf = 0)
+    print(class(res))
+    print(res)
+    colnames(res) <- c("Estadistico")
+    res
+  },
+  rownames = TRUE,striped=TRUE)
+  
+  output$plotRegresion <- renderPlot({
+   chart.Regression(portfolio_analytics$returns,retsBench,Rf=0,fit=c("linear"),main="")
+  })
+  
+  output$tableCorrelacion <- renderTable({
+    table.Correlation(returns,retsBench)
+  },rownames=TRUE,striped=TRUE)
+  
   
   output$evolucion <- renderPlot({
       print(class(portfolios.2))
@@ -415,6 +553,8 @@ server <- function(input, output, session) {
     lag <- stats::lag
     rets = allDataInt/lag(allDataInt) - 1
     #rets <- Return.calculate(allData,method="discrete")#da error
+    pricesStocks <- allDataInt[,(-ncol(allDataInt))]
+    pricesBench <- allDataInt[,ncol(allDataInt)]
     returns <- as.xts(rets[,(-ncol(rets))])
     retsBench <- as.xts(rets[,ncol(rets)])
     retsBench[1,] <- 0
@@ -434,10 +574,14 @@ server <- function(input, output, session) {
 
     })
     #Statistics summary
-    totalRentPort <- Return.cumulative(returns)*100
-    totalRentBench <- Return.cumulative(retsBench)*100
+    totalRentPortAux <- Return.cumulative(returns)*100
+    totalRentBenchAux <- Return.cumulative(retsBench)*100
+    monthlyRentPortAux <- monthlyReturn(pricesStocks)
+    monthlyRentBenchAux <- monthlyReturn(pricesBench)
+    mtdRentPortAux <- last(monthlyRentPortAux)
+    mtdRentBenchAux <- last(monthlyRentBenchAux)
     summary <- table.SFM(returns,retsBench,Rf=0)
-    summary <- rbind(c(totalRentPort),c(totalRentPort-totalRentBench),summary)
+    summary <- rbind(c(totalRentPortAux),c(totalRentPortAux-totalRentBenchAux),summary)
     rownames(summary)[1:2] <- c("Total Return","Excess Returns")
     output$summaryTable <- renderTable(summary,rownames=TRUE)
   })
